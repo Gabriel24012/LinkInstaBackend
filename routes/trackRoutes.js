@@ -142,6 +142,7 @@ router.post('/webhook', async (req, res) => {
             }
 
             const items = await getDatasetItems(datasetId);
+            console.log(`[Webhook] Fetched ${items.length} items from Apify dataset ${datasetId}`);
             
             const targetNorm = trackRequest.targetGroup.map(u => norm(u));
             const foundUsers = items.map(i => {
@@ -150,7 +151,10 @@ router.post('/webhook', async (req, res) => {
                 return mention ? [norm(username), norm(mention)] : [norm(username)];
             }).flat().filter(n => n.length > 0);
 
+            console.log(`[Webhook] Extracted ${foundUsers.length} potential usernames from items.`);
+
             const filteredResults = trackRequest.targetGroup.filter((u, i) => foundUsers.includes(targetNorm[i]));
+            console.log(`[Webhook] Filtered matches for targetGroup: ${filteredResults.length}`);
 
             // In default payload, actId and id are in data (resource)
             const actId = data.actId || data.actorId;
