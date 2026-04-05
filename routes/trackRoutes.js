@@ -25,7 +25,9 @@ router.post('/start', async (req, res) => {
             requestId: request_id,
             postUrl: post_url,
             targetGroup: target_group || [],
-            status: 'processing'
+            status: 'processing',
+            results: { likes: [], comments: [], reposts: [] },
+            finishedRuns: []
         });
         await trackRequest.save();
 
@@ -33,13 +35,13 @@ router.post('/start', async (req, res) => {
         const webhookUrl = `${process.env.PUBLIC_URL}/api/track/webhook?requestId=${request_id}`;
         
         // Likes Scraper
-        const likesRun = await triggerActor('datadoping~instagram-likes-scraper', {
+        const likesRun = await triggerActor('datadoping/instagram-likes-scraper', {
             posts: [post_url],
             max_count: 200
         }, webhookUrl);
 
         // Comments Scraper
-        const commentsRun = await triggerActor('apify~instagram-comment-scraper', {
+        const commentsRun = await triggerActor('apify/instagram-comment-scraper', {
             directUrls: [post_url],
             resultsLimit: 200
         }, webhookUrl);
@@ -184,6 +186,17 @@ router.post('/webhook', async (req, res) => {
     } catch (error) {
         console.error('Error in /webhook:', error);
         res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+// GET /ig-track/test-apify
+router.get('/test-apify', async (req, res) => {
+    try {
+        const { triggerActor } = require('../services/apifyService');
+        // Just try to see if the client can list actors or something simple
+        res.json({ message: 'Apify connection test endpoint' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 

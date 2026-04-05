@@ -11,6 +11,11 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Normalize PUBLIC_URL (remove trailing slash)
+if (process.env.PUBLIC_URL && process.env.PUBLIC_URL.endsWith('/')) {
+    process.env.PUBLIC_URL = process.env.PUBLIC_URL.slice(0, -1);
+}
+
 // Database Connection
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('Connected to MongoDB Atlas'))
