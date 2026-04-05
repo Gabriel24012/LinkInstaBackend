@@ -82,6 +82,7 @@ router.get('/status/:requestId', async (req, res) => {
         res.json({
             status: 'done',
             request_id: requestId,
+            post_url: trackRequest.postUrl,
             likes: trackRequest.results.likes,
             comments: trackRequest.results.comments,
             reposts: trackRequest.results.reposts || []
