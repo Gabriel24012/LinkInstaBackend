@@ -103,9 +103,17 @@ router.get('/status/:requestId', async (req, res) => {
 router.post('/webhook', async (req, res) => {
     try {
         const { requestId } = req.query;
-        const { event, data } = req.body;
+        // Apify default payload uses eventType and eventData (or resource)
+        const { eventType, eventData, resource } = req.body;
+        
+        // Use eventType or fallback to event
+        const event = eventType || req.body.event;
+        // Use resource or eventData or fallback to data
+        const data = resource || eventData || req.body.data;
 
         console.log(`Webhook received for requestId: ${requestId}, event: ${event}`);
+        
+        if (!requestId) return res.status(400).send('Missing requestId');
 
         const trackRequest = await TrackRequest.findOne({ requestId });
         if (!trackRequest) {
@@ -120,24 +128,28 @@ router.post('/webhook', async (req, res) => {
         }
 
         if (event === 'ACTOR.RUN.SUCCEEDED') {
-            // We need to check if BOTH runs have finished.
-            // But since they are separate webhooks, we'll fetch partial data and wait.
-            
             const datasetId = data.defaultDatasetId;
+            if (!datasetId) {
+                console.error('No datasetId found in webhook data');
+                return res.status(200).send('OK');
+            }
+
             const items = await getDatasetItems(datasetId);
             
             const targetNorm = trackRequest.targetGroup.map(u => norm(u));
             const foundUsers = items.map(i => {
                 const username = extractUsername(i);
-                // Also check for mentions in comments
                 const mention = i.text?.match(/@(\w+)/)?.[1] || '';
                 return mention ? [norm(username), norm(mention)] : [norm(username)];
             }).flat().filter(n => n.length > 0);
 
             const filteredResults = trackRequest.targetGroup.filter((u, i) => foundUsers.includes(targetNorm[i]));
 
-            // Determine if it was Likes or Comments run
-            const isLikes = (data.actId === 'datadoping~instagram-likes-scraper' || trackRequest.likesRunId === data.id);
+            // In default payload, actId and id are in data (resource)
+            const actId = data.actId || data.actorId;
+            const runId = data.id || data.actorRunId || resource?.id;
+
+            const isLikes = (actId?.includes('likes-scraper') || trackRequest.likesRunId === runId);
             
             if (isLikes) {
                 trackRequest.results.likes = filteredResults;

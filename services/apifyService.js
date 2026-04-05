@@ -15,12 +15,7 @@ const triggerActor = async (actorId, input, webhookUrl) => {
              webhooks: [
                 {
                     eventTypes: ['ACTOR.RUN.SUCCEEDED', 'ACTOR.RUN.FAILED', 'ACTOR.RUN.ABORTED'],
-                    requestUrl: webhookUrl,
-                    payloadTemplate: `{
-                        "event": {{eventType}},
-                        "resource": {{resource}},
-                        "data": {{data}}
-                    }`
+                    requestUrl: webhookUrl
                 }
             ]
         });
