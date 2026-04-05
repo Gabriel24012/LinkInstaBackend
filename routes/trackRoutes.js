@@ -52,7 +52,11 @@ router.post('/start', async (req, res) => {
         res.status(202).json({ status: 'accepted', version: '2.0-express' });
     } catch (error) {
         console.error('Error in /start:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        res.status(500).json({ 
+            error: 'Internal Server Error', 
+            details: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
