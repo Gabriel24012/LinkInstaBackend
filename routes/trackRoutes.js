@@ -41,10 +41,10 @@ router.post('/start', async (req, res) => {
         // 2. Trigger Apify Actors
         const webhookUrl = `${process.env.PUBLIC_URL}/api/track/webhook?requestId=${request_id}`;
         
-        // Likes Scraper
-        const likesRun = await triggerActor('datadoping/instagram-likes-scraper', {
-            posts: [post_url],
-            max_count: 200
+        // Likes Scraper (Official Apify Actor for Likes)
+        const likesRun = await triggerActor('apify/instagram-likes-scraper', {
+            startUrls: [{ url: post_url }],
+            maxCount: 200
         }, webhookUrl);
 
         // Comments Scraper
@@ -144,6 +144,11 @@ router.post('/webhook', async (req, res) => {
             const items = await getDatasetItems(datasetId);
             console.log(`[Webhook] Fetched ${items.length} items from Apify dataset ${datasetId}`);
             
+            if (items.length > 0) {
+                console.log(`[Webhook] First item keys: ${Object.keys(items[0]).join(', ')}`);
+                console.log(`[Webhook] First item sample: ${JSON.stringify(items[0]).substring(0, 200)}...`);
+            }
+
             const targetNorm = trackRequest.targetGroup.map(u => norm(u));
             const foundUsers = items.map(i => {
                 const username = extractUsername(i);
