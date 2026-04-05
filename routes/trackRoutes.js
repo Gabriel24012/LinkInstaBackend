@@ -14,11 +14,18 @@ const extractUsername = (i) => {
 router.post('/start', async (req, res) => {
     try {
         console.log('Incoming request to /start:', req.body);
-        const { request_id, post_url, target_group } = req.body;
+        let { request_id, post_url, target_group } = req.body;
         
         if (!request_id || !post_url) {
             return res.status(400).json({ error: 'Missing request_id or post_url' });
         }
+
+        // Clean post_url: Remove query parameters like ?igsh=...
+        if (post_url.includes('?')) {
+            post_url = post_url.split('?')[0];
+            if (!post_url.endsWith('/')) post_url += '/';
+        }
+        console.log('Cleaned Post URL for Apify:', post_url);
 
         // 1. Create entry in MongoDB
         const trackRequest = new TrackRequest({
