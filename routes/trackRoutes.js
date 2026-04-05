@@ -11,9 +11,9 @@ const extractUsername = (i) => {
     return i.username || i.userName || i.ownerUsername || i.user?.username || i.owner?.username || '';
 };
 
-// POST /ig-track/start
 router.post('/start', async (req, res) => {
     try {
+        console.log('Incoming request to /start:', req.body);
         const { request_id, post_url, target_group } = req.body;
         
         if (!request_id || !post_url) {
