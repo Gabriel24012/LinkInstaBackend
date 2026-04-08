@@ -42,7 +42,7 @@ router.post('/start', async (req, res) => {
         const webhookUrl = `${process.env.PUBLIC_URL}/api/track/webhook?requestId=${request_id}`;
         
         // Likes Scraper (Official Apify Actor for Likes)
-        const likesRun = await triggerActor('apify/instagram-likes-scraper', {
+        const likesRun = await triggerActor('datadoping/instagram-likes-scraper', {
             startUrls: [{ url: post_url }],
             maxCount: 200
         }, webhookUrl);
