@@ -20,12 +20,34 @@ const normalizePostUrl = (rawUrl) => {
     return clean.endsWith('/') ? clean : `${clean}/`;
 };
 
-const likesInputCandidates = (actorId, postUrl) => {
+const extractPostCode = (postUrl) => {
+    const m = String(postUrl || '').match(/instagram\.com\/(?:p|reel)\/([^/?#]+)/i);
+    return m?.[1] || '';
+};
+
+const buildProxyConfiguration = () => {
+    const group = String(process.env.APIFY_PROXY_GROUP || '').trim();
+    const countryCode = String(process.env.APIFY_PROXY_COUNTRY || '').trim().toUpperCase();
+
+    if (!group) return null;
+
+    const cfg = {
+        useApifyProxy: true,
+        apifyProxyGroups: [group]
+    };
+
+    if (countryCode) cfg.apifyProxyCountry = countryCode;
+    return cfg;
+};
+
+const likesInputCandidates = (actorId, postUrl, proxyConfiguration) => {
+    const postCode = extractPostCode(postUrl);
+    const postsAsUrlOrCode = postCode ? [postUrl, postCode] : [postUrl];
     const base = [
         // datadoping/instagram-likes-scraper (expects snake_case)
-        { posts: [postUrl], max_count: 200 },
+        { posts: postsAsUrlOrCode, max_count: 200 },
         // Some community actors use camelCase
-        { posts: [postUrl], maxCount: 200 },
+        { posts: postsAsUrlOrCode, maxCount: 200 },
         // Some likes actors use startUrls as strings
         { startUrls: [postUrl], maxCount: 200 },
         // Some likes actors use startUrls as objects
@@ -33,20 +55,25 @@ const likesInputCandidates = (actorId, postUrl) => {
     ];
 
     if (String(actorId).includes('datadoping/instagram-likes-scraper')) {
-        return [
-            { posts: [postUrl], max_count: 200 },
-            { posts: [postUrl], maxCount: 200 },
+        const variants = [
+            { posts: postsAsUrlOrCode, max_count: 200 },
+            { posts: postsAsUrlOrCode, maxCount: 200 },
             { startUrls: [postUrl], maxCount: 200 },
             { startUrls: [{ url: postUrl }], maxCount: 200 }
         ];
+        return proxyConfiguration
+            ? variants.map((v) => ({ ...v, proxyConfiguration }))
+            : variants;
     }
 
-    return base;
+    return proxyConfiguration
+        ? base.map((v) => ({ ...v, proxyConfiguration }))
+        : base;
 };
 
-const commentsInputCandidates = (actorId, postUrl) => {
+const commentsInputCandidates = (actorId, postUrl, proxyConfiguration) => {
     if (String(actorId).includes('apify/instagram-comment-scraper')) {
-        return [
+        const variants = [
             {
                 directUrls: [postUrl],
                 resultsLimit: 200,
@@ -56,28 +83,37 @@ const commentsInputCandidates = (actorId, postUrl) => {
             { directUrls: [postUrl], resultsLimit: 200 },
             { startUrls: [postUrl], resultsLimit: 200 }
         ];
+        return proxyConfiguration
+            ? variants.map((v) => ({ ...v, proxyConfiguration }))
+            : variants;
     }
 
     if (String(actorId).includes('apify/instagram-api-scraper')) {
-        return [
+        const variants = [
             { directUrls: [postUrl], resultsType: 'comments', resultsLimit: 200 },
             { directUrls: [postUrl], resultsLimit: 200 },
             { startUrls: [postUrl], resultsType: 'comments', resultsLimit: 200 }
         ];
+        return proxyConfiguration
+            ? variants.map((v) => ({ ...v, proxyConfiguration }))
+            : variants;
     }
 
-    return [
+    const variants = [
         { directUrls: [postUrl], resultsLimit: 200 },
         { startUrls: [postUrl], resultsLimit: 200 },
         { startUrls: [{ url: postUrl }], resultsLimit: 200 }
     ];
+    return proxyConfiguration
+        ? variants.map((v) => ({ ...v, proxyConfiguration }))
+        : variants;
 };
 
-const startActorWithFallback = async (label, actorIds, inputFactory, webhookUrl, postUrl) => {
+const startActorWithFallback = async (label, actorIds, inputFactory, webhookUrl, postUrl, proxyConfiguration) => {
     let lastError = null;
 
     for (const actorId of actorIds) {
-        for (const input of inputFactory(actorId, postUrl)) {
+        for (const input of inputFactory(actorId, postUrl, proxyConfiguration)) {
             try {
                 console.log(`[${label}] Trying actor ${actorId} with input keys: ${Object.keys(input).join(', ')}`);
                 const run = await triggerActor(actorId, input, webhookUrl);
@@ -181,13 +217,18 @@ router.post('/start', async (req, res) => {
             'apify/instagram-comment-scraper',
             'apify/instagram-api-scraper'
         ]);
+        const proxyConfiguration = buildProxyConfiguration();
+        if (proxyConfiguration) {
+            console.log(`[Start] Using Apify proxy group(s): ${proxyConfiguration.apifyProxyGroups.join(', ')}`);
+        }
         
         const likesRun = await startActorWithFallback(
             'Likes',
             likesActorIds,
             likesInputCandidates,
             webhookUrl,
-            post_url
+            post_url,
+            proxyConfiguration
         );
 
         const commentsRun = await startActorWithFallback(
@@ -195,7 +236,8 @@ router.post('/start', async (req, res) => {
             commentsActorIds,
             commentsInputCandidates,
             webhookUrl,
-            post_url
+            post_url,
+            proxyConfiguration
         );
 
         // 3. Update Run IDs in DB
