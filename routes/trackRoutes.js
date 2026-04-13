@@ -11,6 +11,33 @@ const extractUsername = (i) => {
     return i.username || i.userName || i.ownerUsername || i.user?.username || i.owner?.username || '';
 };
 
+const likesInputCandidates = (postUrl) => ([
+    // datadoping/instagram-likes-scraper (expects snake_case)
+    { posts: [postUrl], max_count: 200 },
+    // Some community actors use camelCase
+    { posts: [postUrl], maxCount: 200 },
+    // Some likes actors use startUrls format
+    { startUrls: [{ url: postUrl }], maxCount: 200 }
+]);
+
+const startLikesActorWithFallback = async (webhookUrl, postUrl) => {
+    const likesActorId = process.env.APIFY_LIKES_ACTOR_ID || 'datadoping/instagram-likes-scraper';
+    let lastError = null;
+
+    for (const input of likesInputCandidates(postUrl)) {
+        try {
+            console.log(`[Likes] Trying actor ${likesActorId} with input keys: ${Object.keys(input).join(', ')}`);
+            const run = await triggerActor(likesActorId, input, webhookUrl);
+            return run;
+        } catch (err) {
+            lastError = err;
+            console.warn(`[Likes] Failed with input keys: ${Object.keys(input).join(', ')}. Error: ${err.message}`);
+        }
+    }
+
+    throw lastError || new Error('Unable to start likes actor with any known input format');
+};
+
 router.post('/start', async (req, res) => {
     try {
         console.log('Incoming request to /start:', req.body);
@@ -42,11 +69,7 @@ router.post('/start', async (req, res) => {
         const webhookUrl = `${process.env.PUBLIC_URL}/api/track/webhook?requestId=${request_id}`;
         
         // Likes Scraper (Official Apify Actor for Likes)
-        const likesRun = await triggerActor('datadoping/instagram-likes-scraper', {
-            // This actor expects `posts` instead of `startUrls`.
-            posts: [post_url],
-            maxCount: 200
-        }, webhookUrl);
+        const likesRun = await startLikesActorWithFallback(webhookUrl, post_url);
 
         // Comments Scraper
         const commentsRun = await triggerActor('apify/instagram-comment-scraper', {
