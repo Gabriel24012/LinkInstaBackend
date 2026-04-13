@@ -6,36 +6,117 @@ const { triggerActor, getDatasetItems } = require('../services/apifyService');
 // Normalize username
 const norm = (u) => String(u || '').toLowerCase().replace(/[@.\s]/g, '').trim();
 
-// Extract username from different Apify dataset structures
-const extractUsername = (i) => {
-    return i.username || i.userName || i.ownerUsername || i.user?.username || i.owner?.username || '';
+const parseActorIds = (envValue, defaults) => {
+    const parsed = String(envValue || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    return parsed.length ? parsed : defaults;
 };
 
-const likesInputCandidates = (postUrl) => ([
-    // datadoping/instagram-likes-scraper (expects snake_case)
-    { posts: [postUrl], max_count: 200 },
-    // Some community actors use camelCase
-    { posts: [postUrl], maxCount: 200 },
-    // Some likes actors use startUrls format
-    { startUrls: [{ url: postUrl }], maxCount: 200 }
-]);
+const normalizePostUrl = (rawUrl) => {
+    const clean = String(rawUrl || '').split('?')[0].trim();
+    if (!clean) return clean;
+    return clean.endsWith('/') ? clean : `${clean}/`;
+};
 
-const startLikesActorWithFallback = async (webhookUrl, postUrl) => {
-    const likesActorId = process.env.APIFY_LIKES_ACTOR_ID || 'datadoping/instagram-likes-scraper';
+const likesInputCandidates = (actorId, postUrl) => {
+    const base = [
+        // datadoping/instagram-likes-scraper (expects snake_case)
+        { posts: [postUrl], max_count: 200 },
+        // Some community actors use camelCase
+        { posts: [postUrl], maxCount: 200 },
+        // Some likes actors use startUrls as strings
+        { startUrls: [postUrl], maxCount: 200 },
+        // Some likes actors use startUrls as objects
+        { startUrls: [{ url: postUrl }], maxCount: 200 }
+    ];
+
+    if (String(actorId).includes('datadoping/instagram-likes-scraper')) {
+        return [
+            { posts: [postUrl], max_count: 200 },
+            { posts: [postUrl], maxCount: 200 },
+            { startUrls: [postUrl], maxCount: 200 },
+            { startUrls: [{ url: postUrl }], maxCount: 200 }
+        ];
+    }
+
+    return base;
+};
+
+const commentsInputCandidates = (actorId, postUrl) => {
+    if (String(actorId).includes('apify/instagram-api-scraper')) {
+        return [
+            { directUrls: [postUrl], resultsType: 'comments', resultsLimit: 200 },
+            { directUrls: [postUrl], resultsLimit: 200 },
+            { startUrls: [postUrl], resultsType: 'comments', resultsLimit: 200 }
+        ];
+    }
+
+    return [
+        { directUrls: [postUrl], resultsLimit: 200 },
+        { startUrls: [postUrl], resultsLimit: 200 },
+        { startUrls: [{ url: postUrl }], resultsLimit: 200 }
+    ];
+};
+
+const startActorWithFallback = async (label, actorIds, inputFactory, webhookUrl, postUrl) => {
     let lastError = null;
 
-    for (const input of likesInputCandidates(postUrl)) {
-        try {
-            console.log(`[Likes] Trying actor ${likesActorId} with input keys: ${Object.keys(input).join(', ')}`);
-            const run = await triggerActor(likesActorId, input, webhookUrl);
-            return run;
-        } catch (err) {
-            lastError = err;
-            console.warn(`[Likes] Failed with input keys: ${Object.keys(input).join(', ')}. Error: ${err.message}`);
+    for (const actorId of actorIds) {
+        for (const input of inputFactory(actorId, postUrl)) {
+            try {
+                console.log(`[${label}] Trying actor ${actorId} with input keys: ${Object.keys(input).join(', ')}`);
+                const run = await triggerActor(actorId, input, webhookUrl);
+                return run;
+            } catch (err) {
+                lastError = err;
+                console.warn(`[${label}] Failed actor ${actorId} with keys ${Object.keys(input).join(', ')}. Error: ${err.message}`);
+            }
         }
     }
 
-    throw lastError || new Error('Unable to start likes actor with any known input format');
+    throw lastError || new Error(`Unable to start ${label} actor with any known config`);
+};
+
+const extractUsernames = (item) => {
+    const out = new Set();
+
+    const push = (value) => {
+        const n = norm(value);
+        if (n) out.add(n);
+    };
+
+    const walk = (node) => {
+        if (!node) return;
+
+        if (Array.isArray(node)) {
+            node.forEach(walk);
+            return;
+        }
+
+        if (typeof node !== 'object') return;
+
+        push(node.username);
+        push(node.userName);
+        push(node.ownerUsername);
+        push(node.user?.username);
+        push(node.owner?.username);
+
+        if (typeof node.text === 'string') {
+            const mentions = node.text.match(/@(\w+)/g) || [];
+            mentions.forEach((m) => push(m));
+        }
+
+        walk(node.comments);
+        walk(node.topComments);
+        walk(node.latestComments);
+        walk(node.likes);
+        walk(node.likers);
+    };
+
+    walk(item);
+    return Array.from(out);
 };
 
 router.post('/start', async (req, res) => {
@@ -47,11 +128,7 @@ router.post('/start', async (req, res) => {
             return res.status(400).json({ error: 'Missing request_id or post_url' });
         }
 
-        // Clean post_url: Remove query parameters like ?igsh=...
-        if (post_url.includes('?')) {
-            post_url = post_url.split('?')[0];
-            if (!post_url.endsWith('/')) post_url += '/';
-        }
+        post_url = normalizePostUrl(post_url);
         console.log('Cleaned Post URL for Apify:', post_url);
 
         // 1. Create entry in MongoDB
@@ -67,15 +144,29 @@ router.post('/start', async (req, res) => {
 
         // 2. Trigger Apify Actors
         const webhookUrl = `${process.env.PUBLIC_URL}/api/track/webhook?requestId=${request_id}`;
+        const likesActorIds = parseActorIds(process.env.APIFY_LIKES_ACTOR_IDS || process.env.APIFY_LIKES_ACTOR_ID, [
+            'datadoping/instagram-likes-scraper'
+        ]);
+        const commentsActorIds = parseActorIds(process.env.APIFY_COMMENTS_ACTOR_IDS || process.env.APIFY_COMMENTS_ACTOR_ID, [
+            'apify/instagram-comment-scraper',
+            'apify/instagram-api-scraper'
+        ]);
         
-        // Likes Scraper (Official Apify Actor for Likes)
-        const likesRun = await startLikesActorWithFallback(webhookUrl, post_url);
+        const likesRun = await startActorWithFallback(
+            'Likes',
+            likesActorIds,
+            likesInputCandidates,
+            webhookUrl,
+            post_url
+        );
 
-        // Comments Scraper
-        const commentsRun = await triggerActor('apify/instagram-comment-scraper', {
-            directUrls: [post_url],
-            resultsLimit: 200
-        }, webhookUrl);
+        const commentsRun = await startActorWithFallback(
+            'Comments',
+            commentsActorIds,
+            commentsInputCandidates,
+            webhookUrl,
+            post_url
+        );
 
         // 3. Update Run IDs in DB
         trackRequest.likesRunId = likesRun.id;
@@ -174,11 +265,9 @@ router.post('/webhook', async (req, res) => {
             }
 
             const targetNorm = trackRequest.targetGroup.map(u => norm(u));
-            const foundUsers = items.map(i => {
-                const username = extractUsername(i);
-                const mention = i.text?.match(/@(\w+)/)?.[1] || '';
-                return mention ? [norm(username), norm(mention)] : [norm(username)];
-            }).flat().filter(n => n.length > 0);
+            const foundUsers = items
+                .flatMap((i) => extractUsernames(i))
+                .filter((n) => n.length > 0);
 
             console.log(`[Webhook] Extracted ${foundUsers.length} potential usernames from items.`);
 
