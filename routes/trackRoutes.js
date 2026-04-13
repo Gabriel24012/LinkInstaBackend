@@ -45,6 +45,19 @@ const likesInputCandidates = (actorId, postUrl) => {
 };
 
 const commentsInputCandidates = (actorId, postUrl) => {
+    if (String(actorId).includes('apify/instagram-comment-scraper')) {
+        return [
+            {
+                directUrls: [postUrl],
+                resultsLimit: 200,
+                isNewestComments: false,
+                includeNestedComments: false
+            },
+            { directUrls: [postUrl], resultsLimit: 200 },
+            { startUrls: [postUrl], resultsLimit: 200 }
+        ];
+    }
+
     if (String(actorId).includes('apify/instagram-api-scraper')) {
         return [
             { directUrls: [postUrl], resultsType: 'comments', resultsLimit: 200 },
@@ -119,6 +132,22 @@ const extractUsernames = (item) => {
     return Array.from(out);
 };
 
+const extractDatasetErrorMessage = (items) => {
+    if (!Array.isArray(items) || items.length === 0) return '';
+
+    const messages = items
+        .flatMap((it) => {
+            const row = [];
+            if (typeof it?.errorDescription === 'string') row.push(it.errorDescription);
+            if (typeof it?.error === 'string') row.push(it.error);
+            if (Array.isArray(it?.requestErrorMessages)) row.push(...it.requestErrorMessages);
+            return row;
+        })
+        .filter(Boolean);
+
+    return messages.length ? Array.from(new Set(messages)).join(' | ') : '';
+};
+
 router.post('/start', async (req, res) => {
     try {
         console.log('Incoming request to /start:', req.body);
@@ -138,6 +167,7 @@ router.post('/start', async (req, res) => {
             targetGroup: target_group || [],
             status: 'processing',
             results: { likes: [], comments: [], reposts: [] },
+            diagnostics: { likes: '', comments: '' },
             finishedRuns: []
         });
         await trackRequest.save();
@@ -203,7 +233,12 @@ router.get('/status/:requestId', async (req, res) => {
         }
 
         if (trackRequest.status === 'failed') {
-            return res.json({ status: 'failed', request_id: requestId, error: trackRequest.error });
+            return res.json({
+                status: 'failed',
+                request_id: requestId,
+                error: trackRequest.error,
+                diagnostics: trackRequest.diagnostics || { likes: '', comments: '' }
+            });
         }
 
         // If ready, return the results
@@ -213,7 +248,8 @@ router.get('/status/:requestId', async (req, res) => {
             post_url: trackRequest.postUrl,
             likes: trackRequest.results.likes,
             comments: trackRequest.results.comments,
-            reposts: trackRequest.results.reposts || []
+            reposts: trackRequest.results.reposts || [],
+            diagnostics: trackRequest.diagnostics || { likes: '', comments: '' }
         });
     } catch (error) {
         console.error('Error in /status:', error);
@@ -268,8 +304,12 @@ router.post('/webhook', async (req, res) => {
             const foundUsers = items
                 .flatMap((i) => extractUsernames(i))
                 .filter((n) => n.length > 0);
+            const datasetError = extractDatasetErrorMessage(items);
 
             console.log(`[Webhook] Extracted ${foundUsers.length} potential usernames from items.`);
+            if (datasetError) {
+                console.warn(`[Webhook] Dataset reported issue: ${datasetError}`);
+            }
 
             const filteredResults = trackRequest.targetGroup.filter((u, i) => foundUsers.includes(targetNorm[i]));
             console.log(`[Webhook] Filtered matches for targetGroup: ${filteredResults.length}`);
@@ -282,8 +322,10 @@ router.post('/webhook', async (req, res) => {
             
             if (isLikes) {
                 trackRequest.results.likes = filteredResults;
+                if (datasetError) trackRequest.diagnostics.likes = datasetError;
             } else {
                 trackRequest.results.comments = filteredResults;
+                if (datasetError) trackRequest.diagnostics.comments = datasetError;
             }
 
             // Check if BOTH are now present (or we can just keep adding)
@@ -316,7 +358,14 @@ router.post('/webhook', async (req, res) => {
                  }
 
                  if (trackRequest.finishedRuns.length >= 2) {
-                     trackRequest.status = 'ready';
+                     const noMatches = (trackRequest.results.likes.length + trackRequest.results.comments.length) === 0;
+                     const hasDiagnostics = Boolean(trackRequest.diagnostics?.likes || trackRequest.diagnostics?.comments);
+                     if (noMatches && hasDiagnostics) {
+                         trackRequest.status = 'failed';
+                         trackRequest.error = `No interaction data available. Likes: ${trackRequest.diagnostics.likes || 'no details'}. Comments: ${trackRequest.diagnostics.comments || 'no details'}.`;
+                     } else {
+                         trackRequest.status = 'ready';
+                     }
                  }
             }
 
