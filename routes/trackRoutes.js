@@ -43,7 +43,8 @@ router.post('/start', async (req, res) => {
         
         // Likes Scraper (Official Apify Actor for Likes)
         const likesRun = await triggerActor('datadoping/instagram-likes-scraper', {
-            startUrls: [{ url: post_url }],
+            // This actor expects `posts` instead of `startUrls`.
+            posts: [post_url],
             maxCount: 200
         }, webhookUrl);
 
