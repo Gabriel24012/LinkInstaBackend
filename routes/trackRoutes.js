@@ -40,26 +40,34 @@ const buildProxyConfiguration = () => {
     return cfg;
 };
 
+const getPositiveIntFromEnv = (name, fallback) => {
+    const raw = Number(process.env[name]);
+    return Number.isInteger(raw) && raw > 0 ? raw : fallback;
+};
+
 const likesInputCandidates = (actorId, postUrl, proxyConfiguration) => {
     const postCode = extractPostCode(postUrl);
-    const postsAsUrlOrCode = postCode ? [postUrl, postCode] : [postUrl];
+    const likesLimit = getPositiveIntFromEnv('APIFY_LIKES_MAX_COUNT', 80);
     const base = [
         // datadoping/instagram-likes-scraper (expects snake_case)
-        { posts: postsAsUrlOrCode, max_count: 200 },
+        { posts: [postUrl], max_count: likesLimit },
         // Some community actors use camelCase
-        { posts: postsAsUrlOrCode, maxCount: 200 },
+        { posts: [postUrl], maxCount: likesLimit },
+        // Retry using shortcode instead of URL (some runs get blocked on full URL)
+        ...(postCode ? [{ posts: [postCode], max_count: likesLimit }, { posts: [postCode], maxCount: likesLimit }] : []),
         // Some likes actors use startUrls as strings
-        { startUrls: [postUrl], maxCount: 200 },
+        { startUrls: [postUrl], maxCount: likesLimit },
         // Some likes actors use startUrls as objects
-        { startUrls: [{ url: postUrl }], maxCount: 200 }
+        { startUrls: [{ url: postUrl }], maxCount: likesLimit }
     ];
 
     if (String(actorId).includes('datadoping/instagram-likes-scraper')) {
         const variants = [
-            { posts: postsAsUrlOrCode, max_count: 200 },
-            { posts: postsAsUrlOrCode, maxCount: 200 },
-            { startUrls: [postUrl], maxCount: 200 },
-            { startUrls: [{ url: postUrl }], maxCount: 200 }
+            { posts: [postUrl], max_count: likesLimit },
+            { posts: [postUrl], maxCount: likesLimit },
+            ...(postCode ? [{ posts: [postCode], max_count: likesLimit }, { posts: [postCode], maxCount: likesLimit }] : []),
+            { startUrls: [postUrl], maxCount: likesLimit },
+            { startUrls: [{ url: postUrl }], maxCount: likesLimit }
         ];
         return proxyConfiguration
             ? variants.map((v) => ({ ...v, proxyConfiguration }))
@@ -72,16 +80,18 @@ const likesInputCandidates = (actorId, postUrl, proxyConfiguration) => {
 };
 
 const commentsInputCandidates = (actorId, postUrl, proxyConfiguration) => {
+    const commentsLimit = getPositiveIntFromEnv('APIFY_COMMENTS_RESULTS_LIMIT', 120);
+
     if (String(actorId).includes('apify/instagram-comment-scraper')) {
         const variants = [
             {
                 directUrls: [postUrl],
-                resultsLimit: 200,
+                resultsLimit: commentsLimit,
                 isNewestComments: false,
                 includeNestedComments: false
             },
-            { directUrls: [postUrl], resultsLimit: 200 },
-            { startUrls: [postUrl], resultsLimit: 200 }
+            { directUrls: [postUrl], resultsLimit: commentsLimit },
+            { startUrls: [postUrl], resultsLimit: commentsLimit }
         ];
         return proxyConfiguration
             ? variants.map((v) => ({ ...v, proxyConfiguration }))
@@ -90,9 +100,9 @@ const commentsInputCandidates = (actorId, postUrl, proxyConfiguration) => {
 
     if (String(actorId).includes('apify/instagram-api-scraper')) {
         const variants = [
-            { directUrls: [postUrl], resultsType: 'comments', resultsLimit: 200 },
-            { directUrls: [postUrl], resultsLimit: 200 },
-            { startUrls: [postUrl], resultsType: 'comments', resultsLimit: 200 }
+            { directUrls: [postUrl], resultsType: 'comments', resultsLimit: commentsLimit },
+            { directUrls: [postUrl], resultsLimit: commentsLimit },
+            { startUrls: [postUrl], resultsType: 'comments', resultsLimit: commentsLimit }
         ];
         return proxyConfiguration
             ? variants.map((v) => ({ ...v, proxyConfiguration }))
@@ -100,9 +110,9 @@ const commentsInputCandidates = (actorId, postUrl, proxyConfiguration) => {
     }
 
     const variants = [
-        { directUrls: [postUrl], resultsLimit: 200 },
-        { startUrls: [postUrl], resultsLimit: 200 },
-        { startUrls: [{ url: postUrl }], resultsLimit: 200 }
+        { directUrls: [postUrl], resultsLimit: commentsLimit },
+        { startUrls: [postUrl], resultsLimit: commentsLimit },
+        { startUrls: [{ url: postUrl }], resultsLimit: commentsLimit }
     ];
     return proxyConfiguration
         ? variants.map((v) => ({ ...v, proxyConfiguration }))
