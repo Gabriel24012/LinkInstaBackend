@@ -248,6 +248,144 @@ const extractDatasetErrorMessage = (items) => {
     return messages.length ? Array.from(new Set(messages)).join(' | ') : '';
 };
 
+// Extraer información detallada de likes (usuario completo)
+const extractDetailedLikes = (items) => {
+    const users = [];
+
+    items.forEach(item => {
+        const user = {
+            username: norm(item.username || ''),
+            displayName: item.full_name || item.username || '',
+            profilePicUrl: item.profile_pic_url || '',
+            isPrivate: item.is_private || false,
+            isVerified: item.is_verified || false,
+            gaveLike: true,
+            commented: false,
+            commentText: '',
+            likeDate: new Date(),
+            interactionCount: 1
+        };
+
+        if (user.username) {
+            users.push(user);
+        }
+    });
+
+    return users;
+};
+
+// Extraer información detallada de comentarios
+const extractDetailedComments = (postItem) => {
+    const users = [];
+
+    if (!postItem) return users;
+
+    const extractFromComment = (comment) => {
+        return {
+            username: norm(comment.ownerUsername || comment.username || comment.user?.username || ''),
+            displayName: comment.ownerFullName || comment.user?.full_name || '',
+            profilePicUrl: comment.ownerProfilePicUrl || comment.user?.profile_pic_url || '',
+            isPrivate: comment.isPrivate || comment.user?.is_private || false,
+            isVerified: comment.isVerified || comment.user?.is_verified || false,
+            gaveLike: false,
+            commented: true,
+            commentText: comment.text || '',
+            commentDate: comment.timestamp ? new Date(comment.timestamp * 1000) : new Date(),
+            interactionCount: 1
+        };
+    };
+
+    // Extraer de latestComments
+    if (Array.isArray(postItem.latestComments)) {
+        postItem.latestComments.forEach(comment => {
+            const user = extractFromComment(comment);
+            if (user.username) users.push(user);
+        });
+    }
+
+    // Extraer de firstComment
+    if (postItem.firstComment && typeof postItem.firstComment === 'object') {
+        const user = extractFromComment(postItem.firstComment);
+        if (user.username) users.push(user);
+    }
+
+    // Extraer de comments
+    if (Array.isArray(postItem.comments)) {
+        postItem.comments.forEach(comment => {
+            const user = extractFromComment(comment);
+            if (user.username) users.push(user);
+        });
+    }
+
+    return users;
+};
+
+// Generar datos para la gráfica de barras
+const generateChartData = (interactions, targetGroup) => {
+    const data = {};
+
+    // Inicializar todos los usuarios del target group con 0
+    targetGroup.forEach(username => {
+        const normalized = norm(username);
+        data[normalized] = {
+            username: username,
+            likes: 0,
+            comments: 0,
+            total: 0
+        };
+    });
+
+    // Agregar interacciones
+    interactions.forEach(interaction => {
+        const normalized = interaction.username;
+        if (data[normalized]) {
+            if (interaction.gaveLike) data[normalized].likes++;
+            if (interaction.commented) data[normalized].comments++;
+            data[normalized].total = data[normalized].likes + data[normalized].comments;
+        }
+    });
+
+    // Convertir a arrays para Chart.js
+    const sortedEntries = Object.values(data).sort((a, b) => b.total - a.total);
+
+    return {
+        labels: sortedEntries.map(e => e.username),
+        likes: sortedEntries.map(e => e.likes),
+        comments: sortedEntries.map(e => e.comments),
+        total: sortedEntries.map(e => e.total)
+    };
+};
+
+// Combinar interacciones de likes y comentarios
+const mergeInteractions = (likesInteractions, commentsInteractions) => {
+    const merged = {};
+
+    // Agregar likes
+    likesInteractions.forEach(like => {
+        if (like.username) {
+            merged[like.username] = { ...like };
+        }
+    });
+
+    // Agregar o mezclar comentarios
+    commentsInteractions.forEach(comment => {
+        if (comment.username) {
+            if (merged[comment.username]) {
+                // Usuario ya existe por un like
+                merged[comment.username].commented = true;
+                merged[comment.username].commentText = comment.commentText;
+                merged[comment.username].commentDate = comment.commentDate;
+                merged[comment.username].interactionCount++;
+            } else {
+                // Nuevo usuario que solo comentó
+                merged[comment.username] = { ...comment };
+            }
+        }
+    });
+
+    return Object.values(merged);
+};
+
 router.post('/start', async (req, res) => {
     try {
         console.log('Incoming request to /start:', req.body);
@@ -354,7 +492,13 @@ router.get('/status/:requestId', async (req, res) => {
             likes: trackRequest.results.likes,
             comments: trackRequest.results.comments,
             reposts: trackRequest.results.reposts || [],
-            diagnostics: trackRequest.diagnostics || { likes: '', comments: '' }
+            diagnostics: trackRequest.diagnostics || { likes: '', comments: '' },
+            // Nuevos campos con información detallada
+            detailed_results: trackRequest.detailedResults || {
+                interactions: [],
+                summary: { totalLikes: 0, totalComments: 0, uniqueUsers: 0, privateAccounts: 0, verifiedAccounts: 0 },
+                chartData: { labels: [], likes: [], comments: [], total: [] }
+            }
         });
     } catch (error) {
         console.error('Error in /status:', error);
@@ -399,7 +543,7 @@ router.post('/webhook', async (req, res) => {
 
             const items = await getDatasetItems(datasetId);
             console.log(`[Webhook] Fetched ${items.length} items from Apify dataset ${datasetId}`);
-            
+
             if (items.length > 0) {
                 console.log(`[Webhook] First item keys: ${Object.keys(items[0]).join(', ')}`);
                 console.log(`[Webhook] First item sample: ${JSON.stringify(items[0]).substring(0, 200)}...`);
@@ -414,6 +558,7 @@ router.post('/webhook', async (req, res) => {
             const isLikesActor = actId.includes('likes') || trackRequest.likesRunId === runId;
 
             let foundUsers = [];
+            let detailedInteractions = [];
 
             if (isLikesActor) {
                 // Likes: cada item es un usuario que dio like
@@ -422,6 +567,10 @@ router.post('/webhook', async (req, res) => {
                     .filter((n) => n.length > 0);
                 console.log(`[Webhook] Likes actor: extracted ${foundUsers.length} usernames from ${items.length} items`);
                 console.log(`[Webhook] Sample likes usernames (first 10): ${JSON.stringify(foundUsers.slice(0, 10))}`);
+
+                // Extraer información detallada de likes
+                detailedInteractions = extractDetailedLikes(items);
+                console.log(`[Webhook] Detailed likes info extracted: ${detailedInteractions.length} users`);
             } else {
                 // Comentarios: el actor apify/instagram-scraper devuelve el post con comentarios anidados
                 // Normalmente solo 1 item (el post) con los comentarios dentro
@@ -430,6 +579,12 @@ router.post('/webhook', async (req, res) => {
                     .filter((n) => n.length > 0);
                 console.log(`[Webhook] Comments actor: extracted ${foundUsers.length} usernames from ${items.length} post items`);
                 console.log(`[Webhook] Comments usernames: ${JSON.stringify(foundUsers)}`);
+
+                // Extraer información detallada de comentarios (del primer item, que es el post)
+                if (items.length > 0) {
+                    detailedInteractions = extractDetailedComments(items[0]);
+                    console.log(`[Webhook] Detailed comments info extracted: ${detailedInteractions.length} users`);
+                }
             }
 
             const datasetError = extractDatasetErrorMessage(items);
@@ -447,28 +602,18 @@ router.post('/webhook', async (req, res) => {
 
             // isLikes ya fue determinado arriba, reutilizar esa variable
             const isLikes = isLikesActor;
-            
+
             if (isLikes) {
                 trackRequest.results.likes = filteredResults;
                 if (datasetError) trackRequest.diagnostics.likes = datasetError;
+                // Guardar interacciones de likes (temporalmente)
+                trackRequest._tempLikesInteractions = detailedInteractions;
             } else {
                 trackRequest.results.comments = filteredResults;
                 if (datasetError) trackRequest.diagnostics.comments = datasetError;
+                // Guardar interacciones de comentarios (temporalmente)
+                trackRequest._tempCommentsInteractions = detailedInteractions;
             }
-
-            // Check if BOTH are now present (or we can just keep adding)
-            // Simplified logic: If we have at least once received a success for each type, or if we just want to update as they come.
-            // To be robust, we'll mark as 'ready' only after we have both, but for now we'll allow partial results and update status.
-            
-            // If the other run ID exists and we are the second one to finish, mark as ready.
-            // This is a bit tricky with concurrent runs, but usually one follows the other.
-            
-            // For now, let's mark as ready if we have processed both.
-            // We can check if both results fields are populated (even if empty array).
-            
-            // Wait, we need a way to know if it's the second of the two actors.
-            // We'll add a flag or check if both run IDs have a corresponding status.
-            // Since Apify doesn't tell us "this was the second one", we'll track which ones finished.
             
             if (trackRequest.results.likes.length >= 0 && trackRequest.results.comments.length >= 0) {
                  // Check if both run IDs have been "processed"
@@ -486,6 +631,38 @@ router.post('/webhook', async (req, res) => {
                  }
 
                  if (trackRequest.finishedRuns.length >= 2) {
+                     // Combinar interacciones de likes y comentarios
+                     const likesInteractions = trackRequest._tempLikesInteractions || [];
+                     const commentsInteractions = trackRequest._tempCommentsInteractions || [];
+                     const mergedInteractions = mergeInteractions(likesInteractions, commentsInteractions);
+
+                     // Calcular resumen
+                     const summary = {
+                         totalLikes: mergedInteractions.filter(i => i.gaveLike).length,
+                         totalComments: mergedInteractions.filter(i => i.commented).length,
+                         uniqueUsers: mergedInteractions.length,
+                         privateAccounts: mergedInteractions.filter(i => i.isPrivate).length,
+                         verifiedAccounts: mergedInteractions.filter(i => i.isVerified).length
+                     };
+
+                     // Generar datos para la gráfica
+                     const chartData = generateChartData(mergedInteractions, trackRequest.targetGroup);
+
+                     // Guardar resultados detallados
+                     trackRequest.detailedResults = {
+                         interactions: mergedInteractions,
+                         summary: summary,
+                         chartData: chartData
+                     };
+
+                     // Limpiar variables temporales
+                     trackRequest._tempLikesInteractions = undefined;
+                     trackRequest._tempCommentsInteractions = undefined;
+
+                     console.log(`[Webhook] Detailed results saved: ${mergedInteractions.length} total interactions`);
+                     console.log(`[Webhook] Summary:`, summary);
+                     console.log(`[Webhook] Chart data ready: ${chartData.labels.length} users`);
+
                      const noMatches = (trackRequest.results.likes.length + trackRequest.results.comments.length) === 0;
                      const hasDiagnostics = Boolean(trackRequest.diagnostics?.likes || trackRequest.diagnostics?.comments);
                      if (noMatches && hasDiagnostics) {
