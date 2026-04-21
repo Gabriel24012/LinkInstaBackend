@@ -606,13 +606,13 @@ router.post('/webhook', async (req, res) => {
             if (isLikes) {
                 trackRequest.results.likes = filteredResults;
                 if (datasetError) trackRequest.diagnostics.likes = datasetError;
-                // Guardar interacciones de likes (temporalmente)
-                trackRequest._tempLikesInteractions = detailedInteractions;
+                // Guardar interacciones de likes
+                trackRequest.tempLikesInteractions = detailedInteractions;
             } else {
                 trackRequest.results.comments = filteredResults;
                 if (datasetError) trackRequest.diagnostics.comments = datasetError;
-                // Guardar interacciones de comentarios (temporalmente)
-                trackRequest._tempCommentsInteractions = detailedInteractions;
+                // Guardar interacciones de comentarios
+                trackRequest.tempCommentsInteractions = detailedInteractions;
             }
             
             if (trackRequest.results.likes.length >= 0 && trackRequest.results.comments.length >= 0) {
@@ -632,8 +632,8 @@ router.post('/webhook', async (req, res) => {
 
                  if (trackRequest.finishedRuns.length >= 2) {
                      // Combinar interacciones de likes y comentarios
-                     const likesInteractions = trackRequest._tempLikesInteractions || [];
-                     const commentsInteractions = trackRequest._tempCommentsInteractions || [];
+                     const likesInteractions = trackRequest.tempLikesInteractions || [];
+                     const commentsInteractions = trackRequest.tempCommentsInteractions || [];
                      const mergedInteractions = mergeInteractions(likesInteractions, commentsInteractions);
 
                      // Calcular resumen
@@ -656,8 +656,8 @@ router.post('/webhook', async (req, res) => {
                      };
 
                      // Limpiar variables temporales
-                     trackRequest._tempLikesInteractions = undefined;
-                     trackRequest._tempCommentsInteractions = undefined;
+                     trackRequest.tempLikesInteractions = undefined;
+                     trackRequest.tempCommentsInteractions = undefined;
 
                      console.log(`[Webhook] Detailed results saved: ${mergedInteractions.length} total interactions`);
                      console.log(`[Webhook] Summary:`, summary);
@@ -692,6 +692,38 @@ router.get('/test-apify', async (req, res) => {
         res.json({ message: 'Apify connection test endpoint' });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// GET /api/track/test-db
+router.get('/test-db', async (req, res) => {
+    try {
+        const testId = `test-${Date.now()}`;
+        const newTrack = new TrackRequest({
+            requestId: testId,
+            postUrl: 'https://instagram.com/p/testDB/',
+            targetGroup: ['test_user'],
+            status: 'processing'
+        });
+        
+        await newTrack.save();
+        
+        const retrieved = await TrackRequest.findOne({ requestId: testId });
+        
+        if (retrieved) {
+             // Limpiar el registro de prueba despues de confirmar que se puede leer
+             await TrackRequest.deleteOne({ requestId: testId });
+             res.json({ 
+                 success: true, 
+                 message: 'MongoDB funciona correctamente. Se pudo guardar y leer la prueba.', 
+                 data: retrieved 
+             });
+        } else {
+             res.status(500).json({ success: false, message: 'Se guardó la prueba pero no se pudo leer.' });
+        }
+    } catch (error) {
+        console.error('Error al probar la base de datos:', error);
+        res.status(500).json({ success: false, message: 'Fallo la prueba de base de datos', error: error.message });
     }
 });
 

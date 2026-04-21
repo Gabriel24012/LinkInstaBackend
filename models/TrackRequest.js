@@ -47,6 +47,8 @@ const TrackRequestSchema = new mongoose.Schema({
         likes: { type: String, default: '' },
         comments: { type: String, default: '' }
     },
+    tempLikesInteractions: [UserInteractionSchema],
+    tempCommentsInteractions: [UserInteractionSchema],
     error: { type: String },
     createdAt: { type: Date, default: Date.now }
 });
