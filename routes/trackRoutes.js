@@ -127,7 +127,7 @@ const startActorWithFallback = async (label, actorIds, inputFactory, webhookUrl,
     throw lastError || new Error(`Unable to start ${label} actor with any known config`);
 };
 
-const extractUsernames = (item) => {
+const extractUsernames = (item, isLikesActor = false) => {
     const out = new Set();
 
     const push = (value) => {
@@ -145,17 +145,26 @@ const extractUsernames = (item) => {
 
         if (typeof node !== 'object') return;
 
+        // Campos comunes para likes y comentarios
         push(node.username);
         push(node.userName);
         push(node.ownerUsername);
         push(node.user?.username);
         push(node.owner?.username);
 
+        // Para likes: el actor data-slayer/instagram-likes devuelve usuarios directamente
+        if (isLikesActor) {
+            // El item ya es un usuario con username, no necesita más
+            return;
+        }
+
+        // Para comentarios: extraer menciones del texto
         if (typeof node.text === 'string') {
             const mentions = node.text.match(/@(\w+)/g) || [];
             mentions.forEach((m) => push(m));
         }
 
+        // Navegar estructuras anidadas
         walk(node.comments);
         walk(node.topComments);
         walk(node.latestComments);
@@ -164,6 +173,62 @@ const extractUsernames = (item) => {
     };
 
     walk(item);
+    return Array.from(out);
+};
+
+// Función específica para extraer usernames de comentarios del actor apify/instagram-scraper
+const extractCommentUsernames = (postItem) => {
+    const out = new Set();
+
+    const push = (value) => {
+        const n = norm(value);
+        if (n) out.add(n);
+    };
+
+    // El actor apify/instagram-scraper devuelve el post con comentarios anidados
+    // Los comentarios están en latestComments (array) o firstComment (string)
+    if (!postItem) return [];
+
+    // Extraer de latestComments (array de objetos de comentario)
+    if (Array.isArray(postItem.latestComments)) {
+        postItem.latestComments.forEach(comment => {
+            if (comment.ownerUsername) push(comment.ownerUsername);
+            if (comment.username) push(comment.username);
+            if (comment.user?.username) push(comment.user.username);
+            if (comment.owner?.username) push(comment.owner.username);
+
+            // Extraer menciones del texto del comentario
+            if (typeof comment.text === 'string') {
+                const mentions = comment.text.match(/@(\w+)/g) || [];
+                mentions.forEach((m) => push(m));
+            }
+        });
+    }
+
+    // Extraer de firstComment si es un objeto
+    if (postItem.firstComment && typeof postItem.firstComment === 'object') {
+        const comment = postItem.firstComment;
+        if (comment.ownerUsername) push(comment.ownerUsername);
+        if (comment.username) push(comment.username);
+        if (typeof comment.text === 'string') {
+            const mentions = comment.text.match(/@(\w+)/g) || [];
+            mentions.forEach((m) => push(m));
+        }
+    }
+
+    // Extraer de comments si existe como array
+    if (Array.isArray(postItem.comments)) {
+        postItem.comments.forEach(comment => {
+            if (comment.ownerUsername) push(comment.ownerUsername);
+            if (comment.username) push(comment.username);
+            if (comment.user?.username) push(comment.user.username);
+            if (typeof comment.text === 'string') {
+                const mentions = comment.text.match(/@(\w+)/g) || [];
+                mentions.forEach((m) => push(m));
+            }
+        });
+    }
+
     return Array.from(out);
 };
 
@@ -341,12 +406,31 @@ router.post('/webhook', async (req, res) => {
             }
 
             const targetNorm = trackRequest.targetGroup.map(u => norm(u));
-            const foundUsers = items
-                .flatMap((i) => extractUsernames(i))
-                .filter((n) => n.length > 0);
+
+            // Determinar si es el actor de likes o comentarios
+            const actId = data.actId || data.actorId || '';
+            const runId = data.id || data.actorRunId || resource?.id;
+            const isLikesActor = actId.includes('likes') || trackRequest.likesRunId === runId;
+
+            let foundUsers = [];
+
+            if (isLikesActor) {
+                // Likes: cada item es un usuario que dio like
+                foundUsers = items
+                    .flatMap((i) => extractUsernames(i, true))
+                    .filter((n) => n.length > 0);
+                console.log(`[Webhook] Likes actor: extracted ${foundUsers.length} usernames from ${items.length} items`);
+            } else {
+                // Comentarios: el actor apify/instagram-scraper devuelve el post con comentarios anidados
+                // Normalmente solo 1 item (el post) con los comentarios dentro
+                foundUsers = items
+                    .flatMap((postItem) => extractCommentUsernames(postItem))
+                    .filter((n) => n.length > 0);
+                console.log(`[Webhook] Comments actor: extracted ${foundUsers.length} usernames from ${items.length} post items`);
+            }
+
             const datasetError = extractDatasetErrorMessage(items);
 
-            console.log(`[Webhook] Extracted ${foundUsers.length} potential usernames from items.`);
             if (datasetError) {
                 console.warn(`[Webhook] Dataset reported issue: ${datasetError}`);
             }
@@ -354,11 +438,8 @@ router.post('/webhook', async (req, res) => {
             const filteredResults = trackRequest.targetGroup.filter((u, i) => foundUsers.includes(targetNorm[i]));
             console.log(`[Webhook] Filtered matches for targetGroup: ${filteredResults.length}`);
 
-            // In default payload, actId and id are in data (resource)
-            const actId = data.actId || data.actorId;
-            const runId = data.id || data.actorRunId || resource?.id;
-
-            const isLikes = (actId?.includes('likes-scraper') || trackRequest.likesRunId === runId);
+            // isLikes ya fue determinado arriba, reutilizar esa variable
+            const isLikes = isLikesActor;
             
             if (isLikes) {
                 trackRequest.results.likes = filteredResults;
