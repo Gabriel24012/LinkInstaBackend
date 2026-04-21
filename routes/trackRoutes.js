@@ -406,6 +406,7 @@ router.post('/webhook', async (req, res) => {
             }
 
             const targetNorm = trackRequest.targetGroup.map(u => norm(u));
+            console.log(`[Webhook] Target users (normalized): ${JSON.stringify(targetNorm)}`);
 
             // Determinar si es el actor de likes o comentarios
             const actId = data.actId || data.actorId || '';
@@ -420,6 +421,7 @@ router.post('/webhook', async (req, res) => {
                     .flatMap((i) => extractUsernames(i, true))
                     .filter((n) => n.length > 0);
                 console.log(`[Webhook] Likes actor: extracted ${foundUsers.length} usernames from ${items.length} items`);
+                console.log(`[Webhook] Sample likes usernames (first 10): ${JSON.stringify(foundUsers.slice(0, 10))}`);
             } else {
                 // Comentarios: el actor apify/instagram-scraper devuelve el post con comentarios anidados
                 // Normalmente solo 1 item (el post) con los comentarios dentro
@@ -427,6 +429,7 @@ router.post('/webhook', async (req, res) => {
                     .flatMap((postItem) => extractCommentUsernames(postItem))
                     .filter((n) => n.length > 0);
                 console.log(`[Webhook] Comments actor: extracted ${foundUsers.length} usernames from ${items.length} post items`);
+                console.log(`[Webhook] Comments usernames: ${JSON.stringify(foundUsers)}`);
             }
 
             const datasetError = extractDatasetErrorMessage(items);
@@ -434,6 +437,10 @@ router.post('/webhook', async (req, res) => {
             if (datasetError) {
                 console.warn(`[Webhook] Dataset reported issue: ${datasetError}`);
             }
+
+            // Debug: mostrar qué usernames coinciden
+            const matchedUsers = targetNorm.filter(tn => foundUsers.includes(tn));
+            console.log(`[Webhook] Matched normalized usernames: ${JSON.stringify(matchedUsers)}`);
 
             const filteredResults = trackRequest.targetGroup.filter((u, i) => foundUsers.includes(targetNorm[i]));
             console.log(`[Webhook] Filtered matches for targetGroup: ${filteredResults.length}`);
