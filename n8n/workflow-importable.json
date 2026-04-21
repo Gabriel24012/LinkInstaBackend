@@ -1,0 +1,281 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ig-track/start",
+        "responseMode": "responseNode"
+      },
+      "name": "V13 - Inicio Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [-1100, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nreturn [{\n  json: {\n    request_id: String(body.request_id || '').trim(),\n    post_url: String(body.post_url || '').trim(),\n    target_group: Array.isArray(body.target_group) ? body.target_group : []\n  }\n}];"
+      },
+      "name": "V13 - Procesar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [-880, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\":\"accepted\",\"version\":\"14.9\"}",
+        "options": { "responseCode": 202 }
+      },
+      "name": "V13 - Responder App",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [-680, -80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/data-slayer~instagram-likes/runs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.APIFY_API_TOKEN}}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"posts\": [$node[\"V13 - Procesar\"].json[\"post_url\"]], \"max_count\": 200 } }}"
+      },
+      "name": "V13 - Robot Likes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [-680, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-scraper/runs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.APIFY_API_TOKEN}}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"directUrls\": [$node[\"V13 - Procesar\"].json[\"post_url\"]], \"resultsLimit\": 200 } }}"
+      },
+      "name": "V13 - Robot Comentarios",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [-680, 260]
+    },
+    {
+      "parameters": { 
+        "mode": "wait"
+      },
+      "name": "V13 - Sincronizador",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 1,
+      "position": [-420, 180]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "requestId", "value": "={{ $(\"V13 - Procesar\").first().json.request_id }}" },
+            { "name": "likesRunId", "value": "={{ $(\"V13 - Robot Likes\").first().json.id }}" },
+            { "name": "commentsRunId", "value": "={{ $(\"V13 - Robot Comentarios\").first().json.id }}" }
+          ],
+          "other": [
+            { "name": "targetGroup", "value": "={{ $(\"V13 - Procesar\").first().json.target_group }}" },
+            { "name": "createdAt", "value": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "name": "V14 - Nodo de Seguridad",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [-220, 180]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "InstagramCluster",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "requestId", "fieldValue": "={{$json.requestId}}" },
+            { "fieldId": "likesRunId", "fieldValue": "={{$json.likesRunId}}" },
+            { "fieldId": "commentsRunId", "fieldValue": "={{$json.commentsRunId}}" },
+            { "fieldId": "targetGroup", "fieldValue": "={{$json.targetGroup}}" },
+            { "fieldId": "createdAt", "fieldValue": "={{$json.createdAt}}" }
+          ]
+        }
+      },
+      "name": "V14 - MongoDB Insert",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [-20, 180]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "ig-track/status/:request_id",
+        "responseMode": "responseNode"
+      },
+      "name": "V13 - Webhook Status",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [-1100, 500]
+    },
+    {
+      "parameters": {
+        "operation": "find",
+        "query": "={{ { \"requestId\": $json.params.request_id } }}"
+      },
+      "name": "V14 - MongoDB Find",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [-880, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "if (!$json || Object.keys($json).length === 0) {\n  return [ [], [{ json: { status: 'processing', info: 'Not tracked yet' } }] ];\n}\nreturn [ [{ json: { ...$json, status: 'checking', request_id: $json.requestId } }], [] ];"
+      },
+      "name": "V14 - Mapper",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [-680, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/actor-runs/' + $json.likesRunId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.APIFY_API_TOKEN}}" }
+          ]
+        }
+      },
+      "name": "V13 - Status L",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [-480, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/actor-runs/' + $(\"V14 - Mapper\").first().json.commentsRunId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.APIFY_API_TOKEN}}" }
+          ]
+        }
+      },
+      "name": "V13 - Status C",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [-280, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const likes = $(\"V13 - Status L\").first().json;\nconst comments = $(\"V13 - Status C\").first().json;\nconst mapping = $(\"V14 - Mapper\").first().json;\n\nconst lStatus = (likes.status || likes.data?.status || '').toUpperCase();\nconst cStatus = (comments.status || comments.data?.status || '').toUpperCase();\n\nif (lStatus !== 'SUCCEEDED' || cStatus !== 'SUCCEEDED') {\n  return [ [null], [{ json: {\n    status: 'processing',\n    request_id: mapping.request_id,\n    info: `Likes: ${lStatus}, Comments: ${cStatus}`\n  } }] ];\n}\n\nreturn [ [{ json: { \n    status: 'ready', \n    likesDatasetId: likes.defaultDatasetId || likes.data?.defaultDatasetId, \n    commentsDatasetId: comments.defaultDatasetId || comments.data?.defaultDatasetId,\n    targetGroup: mapping.targetGroup,\n    request_id: mapping.request_id\n} }], [null] ];"
+      },
+      "name": "V13 - Is Ready?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [-80, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/datasets/' + $json.likesDatasetId + '/items' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.APIFY_API_TOKEN}}" }
+          ]
+        }
+      },
+      "name": "V13 - Bajar L",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [120, 420]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/datasets/' + $(\"V13 - Is Ready?\").first().json.commentsDatasetId + '/items' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.APIFY_API_TOKEN}}" }
+          ]
+        }
+      },
+      "name": "V13 - Bajar C",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [120, 580]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ready = $(\"V13 - Is Ready?\").first().json;\nconst target = ready.targetGroup || [];\n\nconst getItemsFromNode = (nodeName) => {\n  const all = $(nodeName).all();\n  if (all.length === 0) return [];\n  if (all.length === 1 && Array.isArray(all[0].json)) return all[0].json;\n  return all.map(i => i.json);\n};\n\nconst itemsL = getItemsFromNode(\"V13 - Bajar L\");\nconst itemsC = getItemsFromNode(\"V13 - Bajar C\");\n\nconst norm = (u) => String(u || '').toLowerCase().replace(/[@.\\s]/g, '').trim();\nconst targetNorm = target.map(u => norm(u));\n\nconst extractUsername = (i) => {\n  return i.username || i.userName || i.ownerUsername || i.user?.username || i.owner?.username || '';\n};\n\nconst foundNamesL = itemsL.map(i => norm(extractUsername(i))).filter(n => n.length > 0);\nconst foundNamesC = itemsC.map(i => norm(extractUsername(i) || i.text?.match(/@(\\w+)/)?.[1] || '')).filter(n => n.length > 0);\n\nreturn [{\n  json: {\n    status: 'done', \n    request_id: ready.request_id,\n    likes: target.filter((u, i) => foundNamesL.includes(targetNorm[i])),\n    comments: target.filter((u, i) => foundNamesC.includes(targetNorm[i])),\n    reposts: [],\n    debug: {\n       l: itemsL.length,\n       c: itemsC.length\n    }\n  }\n}];"
+      },
+      "name": "V13 - Filtro Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [350, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}"
+      },
+      "name": "V13 - Responder App Final",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [550, 500]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "ig-track/ping",
+        "responseMode": "responseNode"
+      },
+      "name": "V13 - Ping Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [-1100, -260]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\":\"ready\",\"version\":\"14.9\",\"pasted\":true}"
+      },
+      "name": "V13 - Responder Pong",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [-880, -260]
+    }
+  ],
+  "connections": {
+    "V13 - Inicio Webhook": { "main": [[{ "node": "V13 - Procesar", "type": "main", "index": 0 }]] },
+    "V13 - Procesar": { "main": [[{ "node": "V13 - Responder App", "type": "main", "index": 0 }, { "node": "V13 - Robot Likes", "type": "main", "index": 0 }, { "node": "V13 - Robot Comentarios", "type": "main", "index": 0 }, { "node": "V13 - Sincronizador", "type": "main", "index": 2 }]] },
+    "V13 - Robot Likes": { "main": [[{ "node": "V13 - Sincronizador", "type": "main", "index": 0 }]] },
+    "V13 - Robot Comentarios": { "main": [[{ "node": "V13 - Sincronizador", "type": "main", "index": 1 }]] },
+    "V13 - Sincronizador": { "main": [[{ "node": "V14 - Nodo de Seguridad", "type": "main", "index": 0 }]] },
+    "V14 - Nodo de Seguridad": { "main": [[{ "node": "V14 - MongoDB Insert", "type": "main", "index": 0 }]] },
+    "V13 - Webhook Status": { "main": [[{ "node": "V14 - MongoDB Find", "type": "main", "index": 0 }]] },
+    "V14 - MongoDB Find": { "main": [[{ "node": "V14 - Mapper", "type": "main", "index": 0 }]] },
+    "V14 - Mapper": { "main": [[{ "node": "V13 - Status L", "type": "main", "index": 0 }], [{ "node": "V13 - Responder App Final", "type": "main", "index": 0 }]] },
+    "V13 - Status L": { "main": [[{ "node": "V13 - Status C", "type": "main", "index": 0 }]] },
+    "V13 - Status C": { "main": [[{ "node": "V13 - Is Ready?", "type": "main", "index": 0 }]] },
+    "V13 - Is Ready?": { "main": [[{ "node": "V13 - Bajar L", "type": "main", "index": 0 }, { "node": "V13 - Bajar C", "type": "main", "index": 0 }], [{ "node": "V13 - Responder App Final", "type": "main", "index": 0 }]] },
+    "V13 - Bajar L": { "main": [[{ "node": "V13 - Filtro Final", "type": "main", "index": 0 }]] },
+    "V13 - Bajar C": { "main": [[{ "node": "V13 - Filtro Final", "type": "main", "index": 0 }]] },
+    "V13 - Filtro Final": { "main": [[{ "node": "V13 - Responder App Final", "type": "main", "index": 0 }]] },
+    "V13 - Ping Webhook": { "main": [[{ "node": "V13 - Responder Pong", "type": "main", "index": 0 }]] }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "instagram-target-group-tracker",
+  "description": "Arquitectura conceptual: Webhook -> Apify -> Intersección -> Estado/Status",
+  "steps": [
+    "POST /ig-track/start: valida payload y devuelve 202 inmediato",
+    "Guardar estado request_id = processing",
+    "Lanzar actors Apify (likes, comments, reposts invertidos por usuario)",
+    "Esperar finalización de runs",
+    "Descargar datasets",
+    "Ejecutar nodo Code de intersección estricta",
+    "Guardar resultado final request_id = done/error",
+    "GET /ig-track/status/:request_id para polling desde Android"
+  ],
+  "critical_constraints": [
+    "No intentar extraer guardados por privacidad de plataforma",
+    "Reposts deben validarse por perfil de cada usuario objetivo",
+    "Flujo asíncrono obligatorio por latencias altas"
+  ]
+}
