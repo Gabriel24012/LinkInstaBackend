@@ -49,7 +49,7 @@ const likesInputCandidates = (actorId, postUrl, proxyConfiguration) => {
     const postCode = extractPostCode(postUrl);
     const likesLimit = getPositiveIntFromEnv('APIFY_LIKES_MAX_COUNT', 80);
     const base = [
-        // datadoping/instagram-likes-scraper (expects snake_case)
+        // data-slayer/instagram-likes (expects snake_case)
         { posts: [postUrl], max_count: likesLimit },
         // Some community actors use camelCase
         { posts: [postUrl], maxCount: likesLimit },
@@ -61,7 +61,7 @@ const likesInputCandidates = (actorId, postUrl, proxyConfiguration) => {
         { startUrls: [{ url: postUrl }], maxCount: likesLimit }
     ];
 
-    if (String(actorId).includes('datadoping/instagram-likes-scraper')) {
+    if (String(actorId).includes('data-slayer/instagram-likes')) {
         const variants = [
             { posts: [postUrl], max_count: likesLimit },
             { posts: [postUrl], maxCount: likesLimit },
@@ -82,7 +82,7 @@ const likesInputCandidates = (actorId, postUrl, proxyConfiguration) => {
 const commentsInputCandidates = (actorId, postUrl, proxyConfiguration) => {
     const commentsLimit = getPositiveIntFromEnv('APIFY_COMMENTS_RESULTS_LIMIT', 120);
 
-    if (String(actorId).includes('apify/instagram-comment-scraper')) {
+    if (String(actorId).includes('apify/instagram-scraper')) {
         const variants = [
             {
                 directUrls: [postUrl],
@@ -92,17 +92,6 @@ const commentsInputCandidates = (actorId, postUrl, proxyConfiguration) => {
             },
             { directUrls: [postUrl], resultsLimit: commentsLimit },
             { startUrls: [postUrl], resultsLimit: commentsLimit }
-        ];
-        return proxyConfiguration
-            ? variants.map((v) => ({ ...v, proxyConfiguration }))
-            : variants;
-    }
-
-    if (String(actorId).includes('apify/instagram-api-scraper')) {
-        const variants = [
-            { directUrls: [postUrl], resultsType: 'comments', resultsLimit: commentsLimit },
-            { directUrls: [postUrl], resultsLimit: commentsLimit },
-            { startUrls: [postUrl], resultsType: 'comments', resultsLimit: commentsLimit }
         ];
         return proxyConfiguration
             ? variants.map((v) => ({ ...v, proxyConfiguration }))
@@ -221,11 +210,10 @@ router.post('/start', async (req, res) => {
         // 2. Trigger Apify Actors
         const webhookUrl = `${process.env.PUBLIC_URL}/api/track/webhook?requestId=${request_id}`;
         const likesActorIds = parseActorIds(process.env.APIFY_LIKES_ACTOR_IDS || process.env.APIFY_LIKES_ACTOR_ID, [
-            'datadoping/instagram-likes-scraper'
+            'data-slayer/instagram-likes'
         ]);
         const commentsActorIds = parseActorIds(process.env.APIFY_COMMENTS_ACTOR_IDS || process.env.APIFY_COMMENTS_ACTOR_ID, [
-            'apify/instagram-comment-scraper',
-            'apify/instagram-api-scraper'
+            'apify/instagram-scraper'
         ]);
         const proxyConfiguration = buildProxyConfiguration();
         if (proxyConfiguration) {
